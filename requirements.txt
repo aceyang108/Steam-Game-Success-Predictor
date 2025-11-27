@@ -1,0 +1,22 @@
+# --- 核心數據處理 ---
+pandas
+numpy
+
+# --- 機器學習模型  ---
+scikit-learn
+xgboost
+
+# --- 可解釋性 AI (XAI) ---
+shap
+matplotlib
+
+# --- 網頁應用 ---
+streamlit
+
+# --- NLP 進階模組 ---
+# 用來把遊戲簡介轉成向量
+sentence-transformers
+torch
+
+
+
