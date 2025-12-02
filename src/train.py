@@ -42,8 +42,8 @@ def comprehensive_evaluation(model, X_test, y_test, X_train, y_train):
     
     plt.figure(figsize=(8, 6))
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues',
-                xticklabels=['冷門(0)', '普通(1)', '熱門(2)'],
-                yticklabels=['冷門(0)', '普通(1)', '熱門(2)'])
+                xticklabels=['Cold(0)', 'Normal(1)', 'Hot(2)'],
+                yticklabels=['Cold(0)', 'Normal(1)', 'Hot(2)'])
     plt.title('(Confusion Matrix)')
     plt.xlabel('prdict')
     plt.ylabel('True')
@@ -71,7 +71,8 @@ def train():
         
     y = df['success_level']
     X = df.drop(columns=['success_level']) 
-    
+    if 'appid' in X.columns:
+        X = X.drop(columns=['appid'])
 
     X = X.select_dtypes(include=['number'])
 
@@ -81,7 +82,8 @@ def train():
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, 
         test_size=CONFIG['test_size'], 
-        random_state=CONFIG['random_state']
+        random_state=CONFIG['random_state'],
+        stratify=y
     )
     
 

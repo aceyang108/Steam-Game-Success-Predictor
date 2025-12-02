@@ -4,9 +4,35 @@ channels:
   - defaults
 dependencies:
   - python=3.10
+
+  # --- 核心數據處理 ---
   - numpy
   - pandas
-  - matplotlib
-  - seaborn
+
+  # --- 機器學習 ---
   - scikit-learn
   - xgboost
+
+  # --- 可視化 / XAI ---
+  - matplotlib
+  - seaborn
+  - shap
+
+  # --- Web App ---
+  - streamlit
+
+  # --- NLP（Torch 建議用 pip，以免 GPU 版本衝突） ---
+  - pip
+
+  - pip:
+      # NLP
+      - sentence-transformers
+      - torch
+
+      # 爬蟲
+      - selenium
+      - undetected-chromedriver
+
+      # 其他工具（可選）
+      - tqdm
+      - requests
