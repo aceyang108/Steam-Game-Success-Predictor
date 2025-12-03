@@ -10,24 +10,91 @@
 ---
 
 ## 2. 資料集架構 (Dataset Architecture)
-本專案嚴格遵循 **"Major + Supplementary"** 的雙層資料架構，以模擬真實世界的變數影響。
 
-### 🔹 Major Dataset (主資料集)：遊戲本體數據
-* **來源：** Kaggle (Steam Store Games) + SteamDB
-* **角色：** 提供「內部屬性」 (Internal Factors)。
-* **內容：**
-    * **特徵 (X):** 遊戲名稱、價格 (Price)、標籤 (Tags/Genres)、支援語言數、開發商歷史評價。
-    * **預測目標 (Y):** 歷史最高同時在線人數 (All-time Peak CCU)。
-    * **標籤定義：** 將 CCU 離散化為三類：`冷門 (Cold)` / `普通 (Normal)` / `爆款 (Hot)`。
+本專案使用「主 + 副」雙層資料結構，以確保模型能同時利用 *遊戲內部特徵* 與 *市場外部環境*。
 
-### 🔸 Supplementary Dataset (副資料集)：市場時機數據
-* **來源：** Steam Sale History & Global Holidays (公開紀錄整理)
-* **角色：** 提供「外部環境影響」 (External Environmental Factors)。
-* **類比：** 如同預測 YouBike 流量需要「天氣數據」，預測遊戲銷量需要「市場檔期」。
-* **內容：**
-    * 歷年 Steam 大型特賣日期 (夏特、冬特)。
-    * 主要市場 (US/EU) 國定假日。
-* **整合方式：** 透過 `Release Date` 與主資料集串接，生成 `is_sale_period` (是否撞期特賣)、`is_holiday_season` (是否為旺季) 等特徵。
+---
+
+### 2.1 Major Dataset（主資料集）
+
+來源：Kaggle + SteamDB
+
+內容包含遊戲本體資訊：
+
+| 類別 | 說明 |
+| --- | --- |
+| 基礎屬性 | appid、名稱、發售日期、價格、平台支援 (Win/Mac/Linux) |
+| 社群評價 | positive / negative 數、user_rating（自動計算） |
+| 多國語言資訊 | supported_languages、audio_languages |
+| 類別描述 | tags、genres、categories |
+| 開發 / 發行資訊 | developers、publishers |
+| Steam 使用者行為 | peak_ccu (用於產生 success_level) |
+
+---
+
+### 主資料集特徵（X）
+
+現在的 preprocessing.py 輸出特徵包括：
+
+- 遊戲基本特徵：price、platforms、name_length
+- 語言相關：num_lang、num_audio_lang、多語言 one-hot
+- 開發商歷史評價：developer_score
+- 發行商歷史評價：publisher_score、publisher_game_count
+- 評價資訊：positive、negative、user_rating、pct_pos_total
+- 日期特徵：release_year、month、weekday、season、quarter
+- 類別特徵：genres multi-hot
+- 標籤特徵：tags multi-hot
+- 心願單相關特徵：wishlist_rank、wishlist_followers
+
+---
+
+### 預測目標（Y）
+
+使用 peak_ccu 分類成：
+
+| success_level | 意義 |
+| --- | --- |
+| 0 | 冷門 (Cold) |
+| 1 | 普通 (Normal) |
+| 2 | 熱門 (Hot) |
+
+分類門檻目前為：
+
+- `100 ~ 499` → 0
+- `500 ~ 4999` → 1
+- `>= 5000` → 2
+
+---
+
+### 2.2 Supplementary Dataset（副資料集）
+
+目前副資料集來源：
+
+### (A) SteamDB Wishlist（願望清單）
+
+包含：
+
+- wishlist_rank
+- wishlist_followers
+
+系統會自動整合成特徵：
+
+- `wishlist_rank`（越小越熱門）
+- `wishlist_followers`（願望清單追蹤量）
+
+缺失處理方式：
+
+- rank 缺失 → 使用 max_rank + 1
+- followers 缺失 → 0
+
+### (B) Steam Calendar（未來可加入）
+
+目前程式中架構已支援，但暫未使用：
+
+- is_sale_period（是否撞 Steam Sale）
+- is_holiday_season（旺季）
+
+可於未來加入模型改善表現。
 
 ---
 
@@ -60,29 +127,70 @@
 
 3.  **完成後目錄結構應如下：**
     ```text
-    Steam-Game-Success-Predictor/      
+    Steam-Game-Success-Predictor/
     │
-    ├── .gitignore                     
-    ├── README.md                      
-    ├── requirements.txt               
-    ├── data/                          
-    │   ├── raw/                       
-    │   │   ├── steam_calendar.csv     
-    │   │   └── steam_games.csv        
+    ├── data/
+    │   ├── raw/
+    │   │   └── games_march2025_cleaned.csv
     │   │
-    │   └── processed/                 
-    │       └── training_data.csv      
+    │   └── processed/
+    │       ├── data_after_preprocessing.csv
+    │       ├── training_data.csv
+    │       ├── wishlists_top1000.csv
+    │       └── wishlists_upcoming.csv
     │
-    ├── models/                        
-    │   └── xgb_model.json             
+    ├── models/
+    │   └── xgb_model.json
     │
-    └── src/                           
-        ├── preprocessing.py           
-        └── train.py                   
+    ├── src/
+    │   ├── make_csv.ipynb
+    │   ├── preprocessing.py
+    │   ├── steamdb_crawler.py
+    │   └── train.py
+    │
+    ├── .gitignore
+    ├── environment.yml
+    ├── README.md
+    └── requirement.txt
     ```
+
+### Preprocessing pipeline
+
+執行：
+
+```
+python src/preprocessing.py
+
+```
+
+輸出：
+
+```
+data/processed/data_after_preprocessing.csv
+
+```
+
 ---
 
-## 5. 專案時程 (3-Week Roadmap)
+## 5. 訓練模型 (Training)
+
+執行：
+
+```
+python src/train.py
+
+```
+
+輸出：
+
+- 混淆矩陣
+- classification report
+- cross-validation 結果
+- 模型檔案：`models/xgb_model.json`
+
+---
+
+## 6. 專案時程 (3-Week Roadmap)
 
 ### 📅 Week 1: 基礎建設與資料清洗 (Baseline)
 - [ ] **Data:** 下載 Kaggle 資料集，並建立「特賣會日期表 (Supplementary)」。
