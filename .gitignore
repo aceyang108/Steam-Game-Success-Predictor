@@ -18,3 +18,6 @@ __pycache__/
 *.xlsx
 data/
 datasets/
+
+# 忽略模型檔案
+models/

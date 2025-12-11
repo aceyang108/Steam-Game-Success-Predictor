@@ -69,32 +69,70 @@
 
 3.  **完成後目錄結構應如下：**
     ```text
-    Steam-Game-Success-Predictor/      
+    Steam-Game-Success-Predictor/
     │
-    ├── .gitignore                     
-    ├── README.md                      
-    ├── requirements.txt               
-    ├── data/                          
-    │   ├── raw/                       
-    │   │   └── games_march2025_cleaned.csv       
+    ├── data/
+    │   ├── raw/
+    │   │   └── games_march2025_cleaned.csv
     │   │
-    │   └── processed/                 
-    │       ├── training_data.csv 
+    │   └── processed/
+    │       ├── data_after_preprocessing.csv
+    │       ├── training_data.csv
     │       ├── wishlists_top1000.csv
     │       └── wishlists_upcoming.csv
     │
-    ├── models/                        
-    │   └── xgb_model.json             
+    ├── models/
+    │   └── xgb_model.json
     │
-    └── src/                           
-        ├── preprocessing.py        
-        ├── make_csv.ipynb
-        ├── steamdb_crawler.py   
-        └── train.py                   
+    ├── src/
+    │   ├── make_csv.ipynb
+    │   ├── preprocessing.py
+    │   ├── steamdb_crawler.py
+    │   └── train.py
+    │
+    ├── .gitignore
+    ├── environment.yml
+    ├── README.md
+    └── requirement.txt
     ```
+
+### Preprocessing pipeline
+
+執行：
+
+```
+python src/preprocessing.py
+
+```
+
+輸出：
+
+```
+data/processed/data_after_preprocessing.csv
+
+```
+
 ---
 
-## 5. 專案時程 (3-Week Roadmap)
+## 5. 訓練模型 (Training)
+
+執行：
+
+```
+python src/train.py
+
+```
+
+輸出：
+
+- 混淆矩陣
+- classification report
+- cross-validation 結果
+- 模型檔案：`models/xgb_model.json`
+
+---
+
+## 6. 專案時程 (3-Week Roadmap)
 
 ### 📅 Week 1: 基礎建設與資料清洗 (Baseline)
 - [ ] **Data:** 下載 Kaggle 資料集，並建立「特賣會日期表 (Supplementary)」。

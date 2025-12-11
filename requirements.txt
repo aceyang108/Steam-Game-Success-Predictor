@@ -9,6 +9,7 @@ xgboost
 # --- 可解釋性 AI (XAI) ---
 shap
 matplotlib
+seaborn
 
 # --- 網頁應用 ---
 streamlit
@@ -18,5 +19,11 @@ streamlit
 sentence-transformers
 torch
 
+# --- 爬蟲：SteamDB Wishlist 用 ---
+selenium
+undetected-chromedriver
 
+# --- 其他（避免環境問題） ---
+tqdm
+requests
 
