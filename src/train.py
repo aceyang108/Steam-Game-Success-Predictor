@@ -12,49 +12,32 @@ PROCESSED_DATA_PATH = os.path.join(BASE_DIR, 'data', 'processed')
 MODEL_PATH = os.path.join(BASE_DIR, 'models')
 os.makedirs(MODEL_PATH, exist_ok=True)
 
-
-# Font settings (for Chinese display; can be removed if unnecessary)
-# 字型設定（中文顯示用，如無需要可移除）
 plt.rcParams['font.sans-serif'] = ['Microsoft JhengHei']
 plt.rcParams['axes.unicode_minus'] = False
 
-
-# Configurable parameters for data split and XGBoost model
-# 可調整的參數：資料切分與 XGBoost 模型設定
 CONFIG = {
     'test_size': 0.2,
     'random_state': 42,
     'xgb_params': {
-        'n_estimators': 200,          # Slightly larger number of trees
-        # 樹的數量，略微加大以提升表現
+        'n_estimators': 200,        
         'max_depth': 6,
-        'learning_rate': 0.05,        # Smaller learning rate for more stable training
-        # 較小的學習率，讓訓練更穩定
+        'learning_rate': 0.05, 
         'subsample': 0.8,
         'colsample_bytree': 0.8,
         'objective': 'multi:softmax',
         'num_class': 3,
         'eval_metric': 'mlogloss',
-        'tree_method': 'hist',        # Fast tree construction method suitable for normal machines
-        # 適用一般機器的較快速樹構建方法
+        'tree_method': 'hist',        
         'random_state': 42
     }
 }
 
 
-def load_data():
-    """
-    Load preprocessed training data from CSV.
-
-    讀取前處理後的訓練資料（CSV 檔）。
-    """
-    data_path = os.path.join(PROCESSED_DATA_PATH, 'data_after_preprocessing.csv')
-    if not os.path.exists(data_path):
-        raise FileNotFoundError(
-            f"Training data file not found: {data_path} / 找不到訓練資料檔案"
-        )
-    df = pd.read_csv(data_path)
-    return df
+def load_data(use_full_data=True): #modify: Switch on different dataset 
+    filename = 'training_data_full.csv' if use_full_data else 'training_data_main.csv'
+    data_path = os.path.join(PROCESSED_DATA_PATH, filename)
+    print(f"📂 Loading Dataset: {filename}")
+    return pd.read_csv(data_path)
 
 
 def prepare_xy(df: pd.DataFrame):
@@ -186,7 +169,7 @@ def train():
     # 6. 將訓練好的模型儲存成檔案
     save_file = os.path.join(MODEL_PATH, 'xgb_model.json')
     model.save_model(save_file)
-    print(f"\nModel saved to: {save_file} / 模型已儲存至此路徑")
+    print(f"\nModel saved to: {save_file} / 模型已儲存至此路徑") #models/xgb_model.json
 
 
 if __name__ == "__main__":

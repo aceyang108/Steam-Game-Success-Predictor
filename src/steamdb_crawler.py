@@ -62,5 +62,6 @@ df_wishlist['followers'] = followers_count
 remove_condition = df_wishlist['name'].str.contains('SteamDB Unknown App', na=False)
 df_wishlist = df_wishlist[~remove_condition]
 
-save_path = os.path.join(PROCESSED_DATA_PATH, 'wishlists.csv')
+save_path = os.path.join(PROCESSED_DATA_PATH, 'wishlists_top1000.csv') #修改前名字對不上
 df_wishlist.to_csv(save_path, index=False)
+print(f"Crawler finished. Data saved to {save_path}")
