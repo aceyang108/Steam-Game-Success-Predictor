@@ -3,6 +3,7 @@ import pandas as pd
 import numpy as np
 import xgboost as xgb
 import streamlit as st
+import altair as alt
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROCESSED_DATA_PATH = os.path.join(BASE_DIR, "data", "processed")
@@ -12,14 +13,17 @@ DATA_FILE = os.path.join(PROCESSED_DATA_PATH, "data_after_preprocessing.csv")
 MODEL_FILE = os.path.join(MODEL_PATH, "xgb_model.json")
 
 
-@st.cache_data
+# -------------------------
+# Cache loaders
+# -------------------------
+@st.cache_data(show_spinner=False)
 def load_data():
     if not os.path.exists(DATA_FILE):
         raise FileNotFoundError(f"Data file not found: {DATA_FILE}")
     return pd.read_csv(DATA_FILE)
 
 
-@st.cache_resource
+@st.cache_resource(show_spinner=False)
 def load_model():
     if not os.path.exists(MODEL_FILE):
         raise FileNotFoundError(f"Model file not found: {MODEL_FILE}")
@@ -28,9 +32,15 @@ def load_model():
     return model
 
 
+# -------------------------
+# Helpers
+# -------------------------
+LABEL_ORDER = ["Cold (0)", "Normal (1)", "Hot (2)"]  # ✅ 全站統一順序
+LABEL_MAP = {0: "Cold", 1: "Normal", 2: "Hot"}
+
+
 def decode_label(y: int) -> str:
-    mapping = {0: "Cold", 1: "Normal", 2: "Hot"}
-    return mapping.get(int(y), "Unknown")
+    return LABEL_MAP.get(int(y), "Unknown")
 
 
 def build_empty_feature_row(feature_cols):
@@ -68,7 +78,6 @@ def prepare_xy(df: pd.DataFrame):
     if "appid" in X.columns:
         X = X.drop(columns=["appid"])
 
-    # keep numeric only
     X = X.select_dtypes(include=["number"])
     if X.shape[1] == 0:
         raise ValueError("No numeric features found after preprocessing.")
@@ -103,35 +112,203 @@ def predict_one(model, x_df: pd.DataFrame):
     return y_pred, proba
 
 
-def render_label_badge(label_int: int, title: str):
-    st.markdown(f"**{title}**")
-    if label_int == 2:
-        st.success(f"{decode_label(label_int)} (2)")
-    elif label_int == 1:
-        st.info(f"{decode_label(label_int)} (1)")
+def render_prediction_panel(y_pred: int, proba):
+    """
+    Render prediction panel in a user-friendly style.
+
+    以一般使用者能看懂的方式呈現預測結果（統一版面）。
+    """
+    label = decode_label(y_pred)
+
+    if y_pred == 2:
+        badge_class = "badge badge-hot"
+        headline = "高熱度（Hot）"
+        hint = "模型推估：首週較有機會形成高峰流量。"
+        emoji = "🔥"
+    elif y_pred == 1:
+        badge_class = "badge badge-normal"
+        headline = "中等熱度（Normal）"
+        hint = "模型推估：熱度落在一般區間，仍有機會靠行銷/口碑拉升。"
+        emoji = "✅"
     else:
-        st.warning(f"{decode_label(label_int)} (0)")
+        badge_class = "badge badge-cold"
+        headline = "低熱度（Cold）"
+        hint = "模型推估：首週爆發力較弱，較依賴曝光策略與選檔期。"
+        emoji = "❄️"
+
+    st.markdown(
+        f"""
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+            <div style="flex:1;">
+              <div class="{badge_class}">預測結果</div>
+              <div style="font-size:28px; font-weight:900; margin-top:10px; color: var(--text);">{emoji} {headline}</div>
+              <div class="muted" style="margin-top:8px; line-height:1.6;">{hint}</div>
+            </div>
+            <div style="width:240px; text-align:right;">
+              <div class="muted">Label</div>
+              <div style="font-size:16px; font-weight:900; color: var(--text);">{label} ({y_pred})</div>
+              <div class="divider" style="margin:10px 0 10px 0;"></div>
+              <div class="muted">信心提示</div>
+              <div style="font-size:14px; color: var(--subtext);">
+                {("可提供機率分佈" if proba is not None else "此模型未提供機率")}
+              </div>
+            </div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    if proba is not None:
+        # ✅ 統一：Cold → Normal → Hot
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Cold (0)", f"{proba[0]*100:.1f}%")
+        c2.metric("Normal (1)", f"{proba[1]*100:.1f}%")
+        c3.metric("Hot (2)", f"{proba[2]*100:.1f}%")
+
+        proba_df = pd.DataFrame(
+            {"Class": LABEL_ORDER, "Probability": [proba[0], proba[1], proba[2]]}
+        )
+
+        chart = (
+            alt.Chart(proba_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("Class:N", sort=LABEL_ORDER, title=None),
+                y=alt.Y("Probability:Q", title=None),
+                tooltip=["Class:N", alt.Tooltip("Probability:Q", format=".2%")],
+            )
+            .properties(height=220)
+            .configure_view(strokeOpacity=0)
+            .configure(background="transparent")
+            .configure_axis(
+                labelColor="#111827",
+                titleColor="#111827",
+                gridColor="rgba(17,24,39,0.10)",
+                domainColor="rgba(17,24,39,0.18)",
+                tickColor="rgba(17,24,39,0.18)",
+            )
+        )
+        st.altair_chart(chart, use_container_width=True)
 
 
+# -------------------------
+# Main UI
+# -------------------------
 def main():
-    st.set_page_config(page_title="Steam Game Success Predictor", layout="wide")
-    st.title("Steam Game Success Predictor")
-    st.caption("Predict game popularity level (Cold / Normal / Hot) based on processed features")
+    st.set_page_config(page_title="Steam 遊戲首週熱度預測系統", layout="wide")
+
+    # --- Session state for keeping last prediction ---
+    if "last_pred" not in st.session_state:
+        st.session_state.last_pred = None
+    if "last_meta" not in st.session_state:
+        st.session_state.last_meta = None
+
+    # ✅ 改成淺色系（避免白底白字）
+    st.markdown(
+        """
+        <style>
+        :root{
+          --bg: #f6f7fb;
+          --panel: #ffffff;
+          --panel-2: #ffffff;
+          --border: rgba(17,24,39,0.12);
+          --text: #111827;
+          --subtext: rgba(17,24,39,0.72);
+          --muted: rgba(17,24,39,0.60);
+          --accent: #2563eb;
+          --accent-2: #4f46e5;
+        }
+
+        html, body, [data-testid="stAppViewContainer"] { background: var(--bg) !important; }
+        [data-testid="stHeader"] { background: transparent !important; }
+
+        /* 不要全域強制白字，改為整體深色字 */
+        h1, h2, h3, h4, h5, p, span, div { color: var(--text); }
+
+        .block-container { padding-top: 1.0rem; padding-bottom: 2.2rem; max-width: 1200px; }
+
+        .hero {
+            padding: 20px 20px;
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(37,99,235,0.10), rgba(79,70,229,0.10));
+            border: 1px solid var(--border);
+            margin-bottom: 14px;
+        }
+        .hero-title { font-size: 32px; font-weight: 900; line-height: 1.1; color: var(--text); }
+        .hero-sub { color: var(--subtext); font-size: 14.5px; margin-top: 8px; line-height: 1.6; }
+
+        .card {
+            padding: 16px 16px;
+            border-radius: 16px;
+            background: var(--panel);
+            border: 1px solid var(--border);
+            box-shadow: 0 6px 18px rgba(17,24,39,0.06);
+        }
+        .card-tight {
+            padding: 14px 14px;
+            border-radius: 16px;
+            background: var(--panel-2);
+            border: 1px solid var(--border);
+        }
+
+        .muted { color: var(--muted); font-size: 13px; }
+        .divider { height: 1px; background: rgba(17,24,39,0.10); margin: 14px 0; }
+
+        .badge {
+            display: inline-block;
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-weight: 900;
+            border: 1px solid var(--border);
+            background: rgba(17,24,39,0.04);
+            color: var(--text);
+        }
+        .badge-hot { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.25); }
+        .badge-normal { background: rgba(59,130,246,0.12); border-color: rgba(59,130,246,0.25); }
+        .badge-cold { background: rgba(245,158,11,0.12); border-color: rgba(245,158,11,0.25); }
+
+        /* Sidebar：改亮一些，提高可讀性 */
+        [data-testid="stSidebar"] {
+          background: #0b1220 !important;
+          border-right: 1px solid rgba(148,163,184,0.18);
+        }
+        [data-testid="stSidebar"] * { color: #e8eefc !important; }
+        [data-testid="stSidebar"] .stMarkdown, [data-testid="stSidebar"] p, [data-testid="stSidebar"] span, [data-testid="stSidebar"] div {
+          color: #e8eefc !important;
+        }
+
+        /* 讓 Tab/輸入元件在淺色主畫面保持一致 */
+        [data-baseweb="tab"] { color: var(--text) !important; }
+        [data-baseweb="tab"][aria-selected="true"] { color: var(--accent) !important; }
+
+        /* 避免某些元件出現白底白字/灰到看不到 */
+        .stTextInput input, .stNumberInput input, .stSelectbox div, .stMultiSelect div {
+          color: var(--text) !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        """
+        <div class="hero">
+          <div class="hero-title">🎮 Steam 遊戲首週熱度預測系統</div>
+          <div class="hero-sub">
+            使用「發售前可得資訊」＋「廠商過往履歷」推估遊戲熱度等級（Cold / Normal / Hot）。<br/>
+            <span style="color: rgba(17,24,39,0.62);">提示：此為統計模型推估結果，非保證玩家數或銷量。</span>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     # Load
     try:
         df = load_data()
         model = load_model()
-    except Exception as e:
-        st.error(str(e))
-        st.stop()
-
-    # Column checks (only needed for Existing Game mode)
-    if "name" not in df.columns:
-        st.warning("Column 'name' not found. Existing Game UI will be limited, but New Game mode still works.")
-
-    # Prepare X/y (same as training)
-    try:
         X_all, y_all = prepare_xy(df)
     except Exception as e:
         st.error(str(e))
@@ -139,206 +316,214 @@ def main():
 
     feature_cols = X_all.columns
 
-    # Feature groups for UI (derived from feature_cols)
+    # Feature groups (for advanced UI)
     lang_cols = [c for c in feature_cols if c.startswith("lang_")]
     audio_lang_cols = [c for c in feature_cols if c.startswith("audio_lang_")]
     genre_cols = [c for c in feature_cols if c.startswith("genre_")]
     tag_cols = [c for c in feature_cols if c.startswith("tag_")]
 
     # Sidebar
-    st.sidebar.header("Controls")
-    mode = st.sidebar.radio(
-        "Mode",
-        ["Existing Game", "What-if Scenario", "New Game (Not in dataset)"],
-        index=0
+    st.sidebar.header("操作流程")
+    mode = st.sidebar.selectbox(
+        "① 選擇模式",
+        ["資料庫遊戲（直接預測）", "情境試算（調整參數）", "資料庫外遊戲（手動輸入）"],
+        index=0,
+        help="一般展示用「直接預測」；想看參數影響用「情境試算」；資料庫找不到的遊戲用「手動輸入」。"
     )
 
-    # Dataset summary
-    with st.sidebar.expander("Dataset summary"):
-        st.write(f"Total games: {len(df)}")
+    with st.sidebar.expander("資料概況", expanded=False):
         dist = y_all.value_counts().sort_index().rename(index={0: "Cold", 1: "Normal", 2: "Hot"})
-        st.write("Label distribution:")
+        st.write(f"總遊戲數：{len(df)}")
+        st.write("類別分布：")
         st.write(dist)
-        st.write(f"Feature count: {len(feature_cols)}")
+        st.write(f"特徵數：{len(feature_cols)}")
 
-    tab_overview, tab_analysis = st.tabs(["Overview", "Analysis"])
-
-    # -------------------------
     # Build x_df depending on mode
-    # -------------------------
     x_df = None
     row = None
     true_label = None
     display_name = None
 
-    # -------- Existing / What-if: pick from dataset --------
-    if mode in ["Existing Game", "What-if Scenario"]:
+    # -------------------------
+    # Mode A/B: Existing / What-if
+    # -------------------------
+    if mode in ["資料庫遊戲（直接預測）", "情境試算（調整參數）"]:
         if "name" not in df.columns:
-            st.error("Column 'name' not found in data_after_preprocessing.csv. Cannot use Existing/What-if mode.")
+            st.error("資料表缺少 name 欄位，無法使用資料庫遊戲模式。")
             st.stop()
 
         all_names = df["name"].astype(str).fillna("").unique().tolist()
-        search_keyword = st.sidebar.text_input("Search game name keyword", "")
 
-        if search_keyword.strip():
-            candidate_names = [n for n in all_names if search_keyword.lower() in n.lower()]
-            if not candidate_names:
-                st.sidebar.warning("No game found for this keyword.")
-                selected_name = st.sidebar.selectbox("Select a game", all_names)
+        st.sidebar.subheader("② 選擇遊戲")
+        keyword = st.sidebar.text_input("搜尋名稱（可留空）", "")
+
+        if keyword.strip():
+            candidates = [n for n in all_names if keyword.lower() in n.lower()]
+            if not candidates:
+                st.sidebar.warning("找不到符合關鍵字的遊戲，請改用下拉選單。")
+                selected_name = st.sidebar.selectbox("選擇遊戲", all_names)
             else:
-                selected_name = st.sidebar.selectbox("Select a game", candidate_names)
+                selected_name = st.sidebar.selectbox("選擇遊戲", candidates)
         else:
-            selected_name = st.sidebar.selectbox("Select a game", all_names)
+            selected_name = st.sidebar.selectbox("選擇遊戲", all_names)
 
         picked = df[df["name"].astype(str) == selected_name]
         if picked.empty:
-            st.error("Selected game not found in dataset.")
+            st.error("你選的遊戲不在資料集中。")
             st.stop()
+
         row = picked.iloc[0]
         display_name = str(row.get("name", "N/A"))
-
         x_df = build_x_from_row(row, feature_cols)
 
-        # What-if adjustments
-        if mode == "What-if Scenario":
-            with st.sidebar.expander("What-if adjustments", expanded=True):
-                if "price" in x_df.columns:
-                    base_price = float(x_df["price"].iloc[0])
-                    new_price = st.slider("Price", 0.0, 80.0, base_price, 0.5)
-                    x_df["price"] = new_price
+        # What-if controls
+        if mode == "情境試算（調整參數）":
+            st.sidebar.subheader("③ 調整假設（可選）")
 
-                if "num_lang" in x_df.columns:
-                    base_num_lang = int(x_df["num_lang"].iloc[0])
-                    new_num_lang = st.slider("Number of supported languages", 0, 60, base_num_lang, 1)
-                    x_df["num_lang"] = float(new_num_lang)
+            with st.sidebar.expander("常用調整", expanded=True):
+                if "price" in x_df.columns:
+                    x_df.loc[0, "price"] = st.slider("價格（USD）", 0.0, 80.0, float(x_df["price"].iloc[0]), 0.5)
 
                 if "wishlist_followers" in x_df.columns:
-                    base_followers = float(x_df["wishlist_followers"].iloc[0])
-                    max_followers = float(max(df.get("wishlist_followers", pd.Series([0])).max(), 100000))
-                    new_followers = st.slider("Wishlist followers", 0.0, max_followers, base_followers, 1000.0)
-                    x_df["wishlist_followers"] = new_followers
+                    base = float(x_df["wishlist_followers"].iloc[0])
+                    maxv = float(max(pd.to_numeric(df.get("wishlist_followers", 0), errors="coerce").max(), 100000))
+                    x_df.loc[0, "wishlist_followers"] = st.slider("願望單追蹤（followers）", 0.0, maxv, base, 1000.0)
 
                 if "wishlist_rank" in x_df.columns:
-                    base_rank = float(x_df["wishlist_rank"].iloc[0])
-                    max_rank = float(max(df.get("wishlist_rank", pd.Series([0])).max(), 10000))
-                    new_rank = st.slider("Wishlist rank (smaller is better)", 1.0, max_rank, base_rank, 1.0)
-                    x_df["wishlist_rank"] = new_rank
+                    base = float(x_df["wishlist_rank"].iloc[0])
+                    maxv = float(max(pd.to_numeric(df.get("wishlist_rank", 0), errors="coerce").max(), 10000))
+                    x_df.loc[0, "wishlist_rank"] = st.slider("願望單排名（越小越好）", 1.0, maxv, base, 1.0)
 
-                # optional: toggle some tags/genres/languages (only if you want)
-                with st.expander("Toggle tags/genres/languages (optional)", expanded=False):
-                    if len(lang_cols) > 0:
-                        chosen_langs = st.multiselect(
-                            "Supported languages (text)",
-                            options=[c.replace("lang_", "") for c in lang_cols],
-                            default=[]
-                        )
-                        for c in lang_cols:
-                            x_df.loc[0, c] = 0.0
-                        for l in chosen_langs:
-                            set_if_exists(x_df, f"lang_{l}", 1.0)
-                        if "num_lang" in x_df.columns:
-                            x_df.loc[0, "num_lang"] = float(len(chosen_langs))
+            with st.sidebar.expander("進階：語言 / 類型 / 標籤（可不填）", expanded=False):
+                if len(lang_cols) > 0:
+                    chosen_langs = st.multiselect(
+                        "文字語言（text）",
+                        options=[c.replace("lang_", "") for c in lang_cols],
+                        default=[]
+                    )
+                    for c in lang_cols:
+                        x_df.loc[0, c] = 0.0
+                    for l in chosen_langs:
+                        set_if_exists(x_df, f"lang_{l}", 1.0)
+                    set_if_exists(x_df, "num_lang", float(len(chosen_langs)))
 
-                    if len(audio_lang_cols) > 0:
-                        chosen_audio = st.multiselect(
-                            "Supported languages (audio)",
-                            options=[c.replace("audio_lang_", "") for c in audio_lang_cols],
-                            default=[]
-                        )
-                        for c in audio_lang_cols:
-                            x_df.loc[0, c] = 0.0
-                        for l in chosen_audio:
-                            set_if_exists(x_df, f"audio_lang_{l}", 1.0)
-                        if "num_audio_lang" in x_df.columns:
-                            x_df.loc[0, "num_audio_lang"] = float(len(chosen_audio))
+                if len(audio_lang_cols) > 0:
+                    chosen_audio = st.multiselect(
+                        "語音語言（audio）",
+                        options=[c.replace("audio_lang_", "") for c in audio_lang_cols],
+                        default=[]
+                    )
+                    for c in audio_lang_cols:
+                        x_df.loc[0, c] = 0.0
+                    for l in chosen_audio:
+                        set_if_exists(x_df, f"audio_lang_{l}", 1.0)
+                    set_if_exists(x_df, "num_audio_lang", float(len(chosen_audio)))
 
-        if "success_level" in row.index:
+                if len(genre_cols) > 0:
+                    chosen_genres = st.multiselect(
+                        "Genres",
+                        options=[c.replace("genre_", "") for c in genre_cols],
+                        default=[]
+                    )
+                    for g in chosen_genres:
+                        set_if_exists(x_df, f"genre_{g}", 1.0)
+
+                if len(tag_cols) > 0:
+                    chosen_tags = st.multiselect(
+                        "Tags（很多，可少選）",
+                        options=[c.replace("tag_", "") for c in tag_cols],
+                        default=[]
+                    )
+                    for t in chosen_tags:
+                        set_if_exists(x_df, f"tag_{t}", 1.0)
+
+        if "success_level" in row.index and pd.notna(row["success_level"]):
             true_label = int(row["success_level"])
 
-    # -------- New Game: build from manual inputs --------
-    if mode == "New Game (Not in dataset)":
-        display_name = st.sidebar.text_input("Game name (display only)", "New Game")
+    # -------------------------
+    # Mode C: New Game manual input (simplified)
+    # -------------------------
+    else:
+        st.sidebar.subheader("② 輸入新遊戲資料")
+        st.sidebar.caption("不知道的欄位可先用預設值，仍可先得到一個模型推估。")
 
-        # Start from all-zero feature vector (same order as training)
+        display_name = st.sidebar.text_input("遊戲名稱（僅顯示用）", "New Game")
         x_df = build_empty_feature_row(feature_cols)
 
-        # Defaults (use dataset means if available)
         def mean_or_zero(col):
             if col in df.columns:
-                try:
-                    return float(pd.to_numeric(df[col], errors="coerce").dropna().mean())
-                except Exception:
-                    return 0.0
+                s = pd.to_numeric(df[col], errors="coerce").dropna()
+                return float(s.mean()) if len(s) else 0.0
             return 0.0
 
-        st.sidebar.subheader("Basic info (pre-release)")
-        price = st.sidebar.number_input("Price", min_value=0.0, value=0.0, step=1.0)
-        windows = st.sidebar.selectbox("Windows", [0, 1], index=1)
-        mac = st.sidebar.selectbox("Mac", [0, 1], index=0)
-        linux = st.sidebar.selectbox("Linux", [0, 1], index=0)
-        name_length = st.sidebar.number_input("Name length", min_value=0, value=10, step=1)
+        with st.sidebar.expander("基本資訊（建議填）", expanded=True):
+            price = st.number_input("價格（USD）", min_value=0.0, value=0.0, step=1.0)
+            windows = st.selectbox("Windows", [0, 1], index=1)
+            mac = st.selectbox("Mac", [0, 1], index=0)
+            linux = st.selectbox("Linux", [0, 1], index=0)
 
-        st.sidebar.subheader("Release timing")
-        release_year = st.sidebar.number_input("Release year", min_value=1970, max_value=2100, value=2025, step=1)
-        release_month = st.sidebar.number_input("Release month", min_value=1, max_value=12, value=6, step=1)
-        release_dayofweek = st.sidebar.number_input("Release dayofweek (0=Mon ... 6=Sun)", min_value=0, max_value=6, value=4, step=1)
+        with st.sidebar.expander("發售時間（建議填）", expanded=False):
+            release_year = st.number_input("年", min_value=1970, max_value=2100, value=2025, step=1)
+            release_month = st.number_input("月", min_value=1, max_value=12, value=6, step=1)
+            release_dayofweek = st.number_input("星期（0=Mon ... 6=Sun）", min_value=0, max_value=6, value=4, step=1)
 
+        with st.sidebar.expander("廠商履歷（可用預設）", expanded=False):
+            dev_score = st.number_input("Developer score", value=mean_or_zero("developer_score"))
+            dev_game_count = st.number_input("Developer game count", min_value=0.0, value=mean_or_zero("developer_game_count"), step=1.0)
+            dev_avg_reviews = st.number_input("Developer avg reviews", min_value=0.0, value=mean_or_zero("developer_avg_reviews"), step=10.0)
+            dev_avg_reco = st.number_input("Developer avg recommendations", min_value=0.0, value=mean_or_zero("developer_avg_recommendations"), step=10.0)
+
+            pub_score = st.number_input("Publisher score", value=mean_or_zero("publisher_score"))
+            pub_game_count = st.number_input("Publisher game count", min_value=0.0, value=mean_or_zero("publisher_game_count"), step=1.0)
+            pub_avg_reviews = st.number_input("Publisher avg reviews", min_value=0.0, value=mean_or_zero("publisher_avg_reviews"), step=10.0)
+
+        with st.sidebar.expander("願望單（可不填）", expanded=False):
+            wishlist_followers = st.number_input("Wishlist followers", min_value=0, value=0, step=100)
+            wishlist_rank = st.number_input("Wishlist rank", min_value=1, value=int(max(mean_or_zero("wishlist_rank"), 1000)), step=1)
+
+        with st.sidebar.expander("進階：語言 / 類型 / 標籤（可不填）", expanded=False):
+            chosen_langs = st.multiselect(
+                "文字語言",
+                options=[c.replace("lang_", "") for c in lang_cols],
+                default=[]
+            )
+            chosen_audio = st.multiselect(
+                "語音語言",
+                options=[c.replace("audio_lang_", "") for c in audio_lang_cols],
+                default=[]
+            )
+            chosen_genres = st.multiselect(
+                "Genres",
+                options=[c.replace("genre_", "") for c in genre_cols],
+                default=[]
+            )
+            chosen_tags = st.multiselect(
+                "Tags（很多，可少選）",
+                options=[c.replace("tag_", "") for c in tag_cols],
+                default=[]
+            )
+
+        # Derived timing
         is_weekend = 1 if int(release_dayofweek) in (5, 6) else 0
         release_quarter = (int(release_month) - 1) // 3 + 1
 
         def month_to_season(m):
             if m in [3, 4, 5]:
                 return 1
-            elif m in [6, 7, 8]:
+            if m in [6, 7, 8]:
                 return 2
-            elif m in [9, 10, 11]:
+            if m in [9, 10, 11]:
                 return 3
             return 4
 
         release_season = month_to_season(int(release_month))
 
-        st.sidebar.subheader("Wishlist (optional)")
-        wishlist_rank = st.sidebar.number_input("Wishlist rank", min_value=1, value=int(max(mean_or_zero("wishlist_rank"), 1000)), step=1)
-        wishlist_followers = st.sidebar.number_input("Wishlist followers", min_value=0, value=0, step=100)
-
-        st.sidebar.subheader("Vendor history (manual / defaults)")
-        dev_score = st.sidebar.number_input("Developer score", value=mean_or_zero("developer_score"))
-        dev_game_count = st.sidebar.number_input("Developer game count", min_value=0.0, value=mean_or_zero("developer_game_count"), step=1.0)
-        dev_avg_reviews = st.sidebar.number_input("Developer avg reviews", min_value=0.0, value=mean_or_zero("developer_avg_reviews"), step=10.0)
-        dev_avg_reco = st.sidebar.number_input("Developer avg recommendations", min_value=0.0, value=mean_or_zero("developer_avg_recommendations"), step=10.0)
-
-        pub_score = st.sidebar.number_input("Publisher score", value=mean_or_zero("publisher_score"))
-        pub_game_count = st.sidebar.number_input("Publisher game count", min_value=0.0, value=mean_or_zero("publisher_game_count"), step=1.0)
-        pub_avg_reviews = st.sidebar.number_input("Publisher avg reviews", min_value=0.0, value=mean_or_zero("publisher_avg_reviews"), step=10.0)
-
-        st.sidebar.subheader("Languages / Genres / Tags")
-        chosen_langs = st.sidebar.multiselect(
-            "Supported languages (text)",
-            options=[c.replace("lang_", "") for c in lang_cols],
-            default=[]
-        )
-        chosen_audio = st.sidebar.multiselect(
-            "Supported languages (audio)",
-            options=[c.replace("audio_lang_", "") for c in audio_lang_cols],
-            default=[]
-        )
-        chosen_genres = st.sidebar.multiselect(
-            "Genres (multi-hot)",
-            options=[c.replace("genre_", "") for c in genre_cols],
-            default=[]
-        )
-        chosen_tags = st.sidebar.multiselect(
-            "Tags (multi-hot)",
-            options=[c.replace("tag_", "") for c in tag_cols],
-            default=[]
-        )
-
-        # Write numeric features (only if they exist)
+        # Write features
         set_if_exists(x_df, "price", float(price))
         set_if_exists(x_df, "windows", float(windows))
         set_if_exists(x_df, "mac", float(mac))
         set_if_exists(x_df, "linux", float(linux))
-        set_if_exists(x_df, "name_length", float(name_length))
+        set_if_exists(x_df, "name_length", float(len(str(display_name))))
 
         set_if_exists(x_df, "release_year", float(release_year))
         set_if_exists(x_df, "release_month", float(release_month))
@@ -359,11 +544,9 @@ def main():
         set_if_exists(x_df, "publisher_game_count", float(pub_game_count))
         set_if_exists(x_df, "publisher_avg_reviews", float(pub_avg_reviews))
 
-        # Language counts
         set_if_exists(x_df, "num_lang", float(len(chosen_langs)))
         set_if_exists(x_df, "num_audio_lang", float(len(chosen_audio)))
 
-        # Multi-hot assignments
         for l in chosen_langs:
             set_if_exists(x_df, f"lang_{l}", 1.0)
         for l in chosen_audio:
@@ -373,105 +556,167 @@ def main():
         for t in chosen_tags:
             set_if_exists(x_df, f"tag_{t}", 1.0)
 
-        true_label = None  # new game has no true label
+        true_label = None
 
-    # Final safety: ensure numeric float + correct shape
+    # Final safety
     x_df = x_df.reindex(columns=feature_cols).fillna(0.0).astype(float)
 
-    if x_df.shape[1] != len(feature_cols):
-        st.error(f"Feature shape mismatch: expected {len(feature_cols)}, got {x_df.shape[1]}")
-        st.stop()
-
-    # Predict
-    y_pred, proba = predict_one(model, x_df)
-
     # -------------------------
-    # Overview
+    # Main layout
     # -------------------------
-    with tab_overview:
-        st.subheader("Game Overview")
+    tab1, tab2 = st.tabs(["結果", "進階分析"])
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(f"**Name:** {display_name if display_name is not None else 'N/A'}")
-            if row is not None and "appid" in row.index and pd.notna(row["appid"]):
-                try:
-                    st.markdown(f"**AppID:** {int(row['appid'])}")
-                except Exception:
-                    st.markdown(f"**AppID:** {row['appid']}")
-            if "price" in x_df.columns:
-                st.markdown(f"**Price:** {float(x_df['price'].iloc[0]):.2f}")
-        with c2:
-            if "release_year" in x_df.columns:
-                st.markdown(f"**Release year:** {int(x_df['release_year'].iloc[0])}")
-            if "release_month" in x_df.columns:
-                st.markdown(f"**Release month:** {int(x_df['release_month'].iloc[0])}")
-            if "is_weekend" in x_df.columns:
-                st.markdown(f"**Weekend release:** {'Yes' if int(x_df['is_weekend'].iloc[0]) == 1 else 'No'}")
-        with c3:
-            if "wishlist_rank" in x_df.columns:
-                st.markdown(f"**Wishlist rank:** {int(x_df['wishlist_rank'].iloc[0])}")
-            if "wishlist_followers" in x_df.columns:
-                st.markdown(f"**Wishlist followers:** {int(x_df['wishlist_followers'].iloc[0])}")
+    with tab1:
+        left, right = st.columns([1.25, 1])
 
-        st.markdown("---")
-        st.subheader("Model Prediction")
+        with left:
+            st.markdown(
+                f"""
+                <div class="card-tight">
+                  <div style="font-size:18px; font-weight:900; color: var(--text);">本次輸入摘要</div>
+                  <div class="divider"></div>
+                  <div class="muted">遊戲：<b style="color: var(--text);">{display_name if display_name else "N/A"}</b></div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
-        p1, p2 = st.columns(2)
-        with p1:
-            render_label_badge(y_pred, "Predicted level")
-        with p2:
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                if "price" in x_df.columns:
+                    st.metric("價格", f"${float(x_df['price'].iloc[0]):.2f}")
+                if row is not None and "appid" in row.index and pd.notna(row["appid"]):
+                    try:
+                        st.metric("AppID", f"{int(row['appid'])}")
+                    except Exception:
+                        st.metric("AppID", f"{row['appid']}")
+            with c2:
+                if "num_lang" in x_df.columns:
+                    st.metric("文字語言", f"{int(x_df['num_lang'].iloc[0])}")
+                if "num_audio_lang" in x_df.columns:
+                    st.metric("語音語言", f"{int(x_df['num_audio_lang'].iloc[0])}")
+            with c3:
+                if "wishlist_followers" in x_df.columns:
+                    st.metric("願望單追蹤", f"{int(x_df['wishlist_followers'].iloc[0])}")
+                if "wishlist_rank" in x_df.columns:
+                    st.metric("願望單排名", f"{int(x_df['wishlist_rank'].iloc[0])}")
+
+        with right:
+            st.markdown(
+                """
+                <div class="card-tight">
+                  <div style="font-size:18px; font-weight:900; color: var(--text);">操作</div>
+                  <div class="divider"></div>
+                  <div class="muted">按下按鈕後會保留結果；調整參數後可再次預測。</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+            if st.button("開始預測", type="primary", use_container_width=True):
+                y_pred, proba = predict_one(model, x_df)
+                st.session_state.last_pred = (y_pred, proba)
+                st.session_state.last_meta = {
+                    "display_name": display_name,
+                    "mode": mode,
+                    "true_label": true_label,
+                }
+
+        st.divider()
+
+        if st.session_state.last_pred is not None:
+            y_pred, proba = st.session_state.last_pred
+            render_prediction_panel(y_pred, proba)
+
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+            st.subheader("對照（資料庫內遊戲才有）")
             if true_label is None:
-                st.markdown("**True level**")
-                st.write("N/A")
+                st.info("這是資料庫外輸入的遊戲，因此沒有 True level 可對照。")
             else:
-                render_label_badge(int(true_label), "True level")
+                st.markdown(
+                    f"""
+                    <div class="card-tight">
+                      <div class="muted">True level（資料庫標籤）</div>
+                      <div style="font-size:18px; font-weight:900; color: var(--text);">{decode_label(int(true_label))} ({int(true_label)})</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+        else:
+            st.markdown(
+                """
+                <div class="card">
+                  <div style="font-size:18px; font-weight:900; color: var(--text);">尚未預測</div>
+                  <div class="divider"></div>
+                  <div class="muted">請先在右側按「開始預測」。</div>
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
 
-        if proba is not None:
-            st.markdown("**Class probabilities**")
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Cold (0)", f"{proba[0]*100:.1f}%")
-            m2.metric("Normal (1)", f"{proba[1]*100:.1f}%")
-            m3.metric("Hot (2)", f"{proba[2]*100:.1f}%")
-
-            proba_df = pd.DataFrame(
-                {"Class": ["Cold (0)", "Normal (1)", "Hot (2)"], "Probability": proba}
-            ).set_index("Class")
-            st.bar_chart(proba_df)
-
-        st.caption("Inference uses the same numeric feature set and column order as training.")
-
-    # -------------------------
-    # Analysis
-    # -------------------------
-    with tab_analysis:
-        st.subheader("Feature Values (This Sample)")
-
+    with tab2:
         non_zero = int((x_df.iloc[0] != 0).sum())
-        st.write(f"Non-zero features: {non_zero} / {x_df.shape[1]}")
 
-        show_mode = st.radio("Show features", ["Top non-zero only", "All"], horizontal=True)
-        if show_mode == "Top non-zero only":
+        st.markdown(
+            f"""
+            <div class="card">
+              <div style="font-size:18px; font-weight:900; color: var(--text);">分析摘要</div>
+              <div class="divider"></div>
+              <div class="muted">非零特徵數：<b style="color: var(--text);">{non_zero}</b> / {x_df.shape[1]}</div>
+              <div class="muted">提示：特徵數很大是因為 tags/genres/languages 的 multi-hot 展開。</div>
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+        with st.expander("查看非零特徵（最多 200 筆）", expanded=False):
             nz = x_df.T
             nz.columns = ["value"]
             nz = nz[nz["value"] != 0].sort_values("value", ascending=False)
-            st.dataframe(nz.head(200))
-        else:
-            st.dataframe(x_df.T)
+            st.dataframe(nz.head(200), use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("Global Feature Importance (Top 20)")
+        st.divider()
 
+        st.subheader("全域特徵重要度（Top 20）")
         if hasattr(model, "feature_importances_"):
             importances = model.feature_importances_
             fi_df = pd.DataFrame(
                 {"feature": feature_cols, "importance": importances}
             ).sort_values("importance", ascending=False).head(20)
 
-            st.dataframe(fi_df)
-            st.bar_chart(fi_df.set_index("feature")["importance"])
+            st.dataframe(fi_df, use_container_width=True)
+
+            fi_top = fi_df.copy()
+            fi_top["feature"] = fi_top["feature"].astype(str)
+
+            fi_chart = (
+                alt.Chart(fi_top)
+                .mark_bar()
+                .encode(
+                    x=alt.X("importance:Q", title=None),
+                    y=alt.Y("feature:N", sort="-x", title=None),
+                    tooltip=["feature:N", alt.Tooltip("importance:Q", format=".4f")],
+                )
+                .properties(height=420)
+                .configure_view(strokeOpacity=0)
+                .configure(background="transparent")
+                .configure_axis(
+                    labelColor="#111827",
+                    titleColor="#111827",
+                    gridColor="rgba(17,24,39,0.10)",
+                    domainColor="rgba(17,24,39,0.18)",
+                    tickColor="rgba(17,24,39,0.18)",
+                )
+            )
+            st.altair_chart(fi_chart, use_container_width=True)
         else:
-            st.info("This model does not expose feature_importances_.")
+            st.info("此模型未提供 feature_importances_。")
 
 
 if __name__ == "__main__":
